@@ -12,6 +12,9 @@ GROUP_ID=$(id -g $USER)
 IMPLEMENTED=(ntfs vfat ext2 ext3 ext4)
 NTFS_DRIVER="ntfs"
 
+# Clear input buffer
+read -t 0.01
+
 if [[ "$1" == "explicit" ]]; then
 	NTFS_DRIVER="ntfs-3g"
 fi

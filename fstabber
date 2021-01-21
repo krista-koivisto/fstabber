@@ -1,0 +1,204 @@
+#!/bin/bash
+
+declare -A DRIVES
+declare -A DRIVE_UUID
+declare -A DRIVE_TYPE
+declare -A DRIVE_SIZE
+declare -A DRIVE_LABEL
+declare -A DRIVE_LABEL_REAL
+
+USER_ID=$(id -u $USER)
+GROUP_ID=$(id -g $USER)
+IMPLEMENTED=(ntfs vfat ext2 ext3 ext4)
+NTFS_DRIVER="ntfs"
+
+if [[ "$1" == "explicit" ]]; then
+	NTFS_DRIVER="ntfs-3g"
+fi
+
+echo "$NTFS_DRIVER" && exit
+
+function echo_header () {
+	HEADER_STRING=$(echo "  $1  ")
+	CHAR_STRING=$(seq 1 ${#HEADER_STRING})
+	HEADER_LINES=$(printf '=%.0s' $CHAR_STRING)
+	printf "\n$HEADER_LINES\n$HEADER_STRING\n$HEADER_LINES\n\n"
+}
+
+function echo_big () {
+	printf "\n\n$1\n\n"
+}
+
+function check_if_super_user () {
+	if [[ "$EUID" == "0" ]]; then
+		echo "This script should be run as the user you want to mount the drive for."
+		read -p "Do you want to continue as root? [y/N] " -n 1 -r
+		if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+			exit
+		fi
+	else
+		sudo -n > /dev/null echo 2>&1
+		# Check if we need to prompt for a password
+		if [ $? -ne 0 ]; then
+			echo -e "This script requires \e[34msudo\e[0m for some calls:\n"
+			sudo echo
+		fi
+	fi
+}
+
+function check_bash_version () {
+	VERSION="${BASH_VERSINFO:-0}"
+	NO_CAN_DO="Sorry! Your bash version ($BASH_VERSION) is too old, this script requres at least version 4.4.\n"
+	if [ $VERSION -lt 4 ]; then
+		echo -e "$NO_CAN_DO" && exit
+	elif [ $VERSION -eq 4 ]; then
+		SUB_VERSION=$(echo $BASH_VERSION | grep -hoE '[0-9]+\.[0-9]+' | sed -r 's/^[0-9]+\.([0-9]+)/\1/')
+		if [ $SUB_VERSION -lt 4 ]; then
+			echo -e "$NO_CAN_DO" && exit
+		fi
+	fi
+}
+
+function check_type_support () {
+	if [[ ! " ${IMPLEMENTED[@]} " =~ " ${1} " ]]; then
+		echo
+		echo -e "Sorry, file system type \e[33m$1\e[0m is not currently supported!"
+		echo
+		exit
+	fi
+}
+
+function confirm () {
+        read -p "$(echo -e $1) [Y/n] " -n 1 -r
+        if [[ $REPLY =~ ^[Yy]?$ ]]; then
+                RESULT=1
+	else
+		RESULT=0
+        fi
+}
+
+function grab_string () {
+	CONTAINS_STRING=$(echo "$1" | grep -hoE "(^|\\s)$2.*?")
+	if [[ ${#CONTAINS_STRING} -gt 0 ]]; then
+		echo "$1" | sed -r "s/.*(^|\\s)$2.*?\$/\\2/"
+	fi
+}
+
+function get_size () {
+	lsblk -n -o SIZE "$1" | grep -hoE -m 1 '\s*([a-zA-Z0-9\.,]+)' | sed -r 's/\s*?([0-9A-Za-z\.,]+)$/\1/'
+}
+
+function parse_blkid () {
+	INDEX=0
+	BLOCKS="$(sudo blkid)"
+	while read -r BLOCK; do
+		DRIVE=$(grab_string "$BLOCK" "^([^:]+)")
+		DRIVE_UUID[$DRIVE]=$(grab_string "$BLOCK" "UUID=\"([A-Za-z0-9-]+?)\"")
+		LABEL=$(grab_string "$BLOCK" "LABEL=\"([^\"]+?)\"")
+		DRIVE_TYPE[$DRIVE]=$(grab_string "$BLOCK" "TYPE=\"([^\"]+?)\"")
+		DRIVE_SIZE[$DRIVE]=$(get_size "$DRIVE")
+		DRIVE_LABEL_REAL[$DRIVE]="$LABEL"
+		if [[ ${#LABEL} -gt 0 ]]; then
+			DRIVE_LABEL[$DRIVE]="\\e[32m$LABEL\\e[0m"
+		else
+			DRIVE_LABEL[$DRIVE]='\e[34m<NO LABEL>\e[0m'
+		fi
+		INDEX=$((INDEX+1))
+		DRIVES["$INDEX"]="$DRIVE"
+	done < <(echo "$BLOCKS")
+}
+
+function pick_drive () {
+	declare -A INDEX_MAP
+	INDEX=0
+
+	echo_big "Pick a drive:"
+
+	for DRIVE_INDEX in "${!DRIVES[@]}"; do
+		INDEX=$((INDEX+1))
+		INDEX_MAP["$INDEX"]=$DRIVE_INDEX
+		DRIVE="${DRIVES[$DRIVE_INDEX]}"
+		LABEL="${DRIVE_LABEL[$DRIVE]}"
+		SIZE="${DRIVE_SIZE[$DRIVE]}"
+		TYPE="${DRIVE_TYPE[$DRIVE]}"
+		# echo "$INDEX. $DRIVE ($LABEL) $TYPE @ $SIZE"
+		echo -e "$INDEX. \e[33m$DRIVE\e[0m"
+		echo -e "        Label: $LABEL"
+		echo -e "        Size:  $SIZE"
+		echo -e "        Type:  $TYPE"
+	done
+
+	echo
+	read -p "Which drive should we create an fstab line for? " USER_CHOICE
+
+	if [[ ! -v INDEX_MAP["$USER_CHOICE"] ]]; then
+		echo_big "Invalid choice, please try again!" && exit
+	fi
+	
+	SELECTED=${INDEX_MAP["$USER_CHOICE"]}
+	SELECTED=${DRIVES[$SELECTED]}
+
+	check_type_support "${DRIVE_TYPE[$SELECTED]}"
+}
+
+function pick_mount_point () {
+	MOUNTDIR="$SELECTED"
+	if [ "${DRIVE_LABEL_REAL[$SELECTED]}" != "" ]; then
+		MOUNTDIR="/${DRIVE_LABEL_REAL[$SELECTED]}"
+	fi
+	read -p "Great! Where do you want it mounted? [/media$MOUNTDIR] " MOUNTPOINT
+	if [[ ${#MOUNTPOINT} -eq 0 ]]; then
+		MOUNTPOINT="/media$MOUNTDIR"
+	fi
+	if [[ ! -d "$MOUNTPOINT" ]]; then
+		confirm "Directory '$MOUNTPOINT' does not exist, create it?"
+		if [ "$RESULT" == "1" ]; then
+			sudo mkdir -p "$MOUNTPOINT"
+		fi
+	fi
+	echo "$MOUNTPOINT"
+}
+
+echo_header "Welcome to the fstabber"
+check_bash_version
+check_if_super_user
+
+echo "This script will create and print an fstab entry for you. It does not automatically add the entry to /etc/fstab, you must do that yourself."
+
+parse_blkid DRIVES
+pick_drive
+
+UUID=${DRIVE_UUID[$SELECTED]}
+TYPE=${DRIVE_TYPE[$SELECTED]}
+MOUNTPOINT=$(pick_mount_point)
+
+
+RESULT=""
+
+case "$TYPE" in
+	ntfs)
+		RESULT="UUID=$UUID $MOUNTPOINT $NTFS_DRIVER uid=$USER_ID,gid=$GROUP_ID,umask=0022,sync,auto,rw 0 0"
+		;;
+	ext2 | ext3 | ext4)
+		RESULT="UUID=$UUID $MOUNTPOINT $TYPE defaults 0 2"
+		;;
+	vfat)
+		RESULT="UUID=$UUID $MOUNTPOINT $TYPE uid=$USER_ID,gid=$GROUP_ID,umask=0022,sync,auto,rw 0 0"
+		;;
+	*)
+		echo
+		echo -e "\nUnexpected problem: file system type \e[33m$TYPE\e[0m is not recognized."
+		echo "Unable to continue, sorry!"
+		echo
+		exit
+		;;
+esac
+
+echo
+echo_header "FINISHED"
+
+echo -e "Your fstab entry for drive \e[33m$SELECTED\e[0m:"
+echo -e "\e[32m$RESULT\e[0m"
+echo -e "\nYou can try it (after adding your entry to fstab) by running \e[34mmount -a\e[0m."
+echo
+

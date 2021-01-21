@@ -16,8 +16,6 @@ if [[ "$1" == "explicit" ]]; then
 	NTFS_DRIVER="ntfs-3g"
 fi
 
-echo "$NTFS_DRIVER" && exit
-
 function echo_header () {
 	HEADER_STRING=$(echo "  $1  ")
 	CHAR_STRING=$(seq 1 ${#HEADER_STRING})

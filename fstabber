@@ -154,7 +154,9 @@ function pick_mount_point () {
 			sudo mkdir -p "$MOUNTPOINT"
 		fi
 	fi
-	echo "$MOUNTPOINT"
+
+	# Fix spaces
+	echo "$MOUNTPOINT" | sed -r 's/\s/\\\\040/g'
 }
 
 echo_header "Welcome to the fstabber"
@@ -169,7 +171,6 @@ pick_drive
 UUID=${DRIVE_UUID[$SELECTED]}
 TYPE=${DRIVE_TYPE[$SELECTED]}
 MOUNTPOINT=$(pick_mount_point)
-
 
 RESULT=""
 

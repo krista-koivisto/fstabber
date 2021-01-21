@@ -6,7 +6,17 @@ Entries are not automatically added to `/etc/fstab`, you will have to do that yo
 
 ### Usage
 
-Just launch `fstabber` and it will take you through the steps. You may need to `chmod +x` it first.
+#### One-liner
+
+If you just want to run it quickly, you can use the following:
+
+`bash <(wget -qO - https://raw.githubusercontent.com/krista-koivisto/fstabber/master/fstabber)`
+
+The code above will run the latest version of the script without saving it on your system.
+
+#### Cloned from Git
+
+Clone the repository, run `chmod +x fstabber` in the fstabber directoy and run `./fstabber`.
 
 ### File System Support
 
